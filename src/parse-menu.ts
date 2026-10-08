@@ -71,3 +71,44 @@ export function parseMenu(
     menu_url: externalUrl,
   };
 }
+
+/** Page whole items while preserving all observed recipe and menu metadata. */
+export function pageMenu(result: RestaurantMenus, args: {
+  view?: string; section_name?: string; offset?: number; limit?: number;
+}): RestaurantMenus | Record<string, unknown> {
+  const budget = 8500;
+  if (args.view === 'full' && args.section_name === undefined && args.offset === undefined && args.limit === undefined) return result;
+  if (args.section_name === undefined && args.offset === undefined && args.limit === undefined && JSON.stringify(result).length <= budget) return result;
+  const offset = args.offset ?? 0;
+  const available_sections: string[] = [];
+  const entries: { menu: number; section: number; item: unknown }[] = [];
+  const menus = result.menus.map((menu, mi) => {
+    const sections = Array.isArray(menu.sections) ? menu.sections : [];
+    const filtered = sections.filter(section => {
+      if (!isRecord(section)) return true;
+      if (typeof section.title === 'string') available_sections.push(section.title);
+      return args.section_name === undefined || (typeof section.title === 'string' && section.title.trim().toLowerCase() === args.section_name.trim().toLowerCase());
+    });
+    return { ...menu, sections: filtered.map((section, si) => {
+      if (!isRecord(section)) return section;
+      if (Array.isArray(section.items)) for (const item of section.items) entries.push({ menu: mi, section: si, item });
+      return { ...section, ...(Array.isArray(section.items) ? { items: [] } : {}) };
+    }) };
+  });
+  let returned = Math.min(args.limit ?? 20, Math.max(0, entries.length - offset));
+  const render = (count: number) => {
+    const selected = structuredClone(menus);
+    for (const entry of entries.slice(offset, offset + count)) {
+      (selected[entry.menu].sections[entry.section] as Record<string, unknown> & { items: unknown[] }).items.push(entry.item);
+    }
+    return { ...result, menus: selected, available_sections: [...new Set(available_sections)],
+      ...(args.section_name === undefined ? {} : { section_found: menus.some(menu => menu.sections.length > 0) }),
+      pagination: { offset, returned_items: count, total_items: entries.length,
+        next_offset: offset + count < entries.length ? offset + count : null },
+      note: 'A page of whole published menu items; follow next_offset with the same menu/section selection. This is not live availability or kitchen confirmation.' };
+  };
+  let page = render(returned);
+  while (JSON.stringify(page).length > budget && returned > 1) page = render(--returned);
+  if (JSON.stringify(page).length > budget) throw new Error('A complete menu item or metadata exceeds the native response budget. Narrow menu_name/section_name or use view=full with an uncapped client; recipe text was not truncated.');
+  return page;
+}

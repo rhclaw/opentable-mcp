@@ -77,4 +77,51 @@ describe('menu tool', () => {
     expect(result.status).toBe('external_only');
     expect(mockFetchHtml).toHaveBeenCalledTimes(1);
   });
+  it('returns whole paginated items under the native output cap', async () => {
+    const state = structuredClone(fixture);
+    state.restaurantProfile.menus.menuData[1].sections[0].items = Array.from({ length: 32 }, (_, i) => ({
+      title: `Dish ${i}`, description: 'Full ingredients: chicken, rice and vegetables. '.repeat(6), price: '18.00',
+      variationGroups: [{ items: [{ title: 'Large', price: '6.00' }] }],
+    }));
+    mockFetchHtml.mockResolvedValue(`<script>{"__INITIAL_STATE__":${JSON.stringify(state)}}</script>`);
+    const titles: string[] = [];
+    let offset = 0;
+    do {
+      const response = await harness.callTool('opentable_get_menu', { restaurant_id: 42, menu_name: 'Dinner', offset });
+      expect(response.isError).toBeFalsy();
+      expect(JSON.stringify(response).length).toBeLessThan(10000);
+      const page = parse(response);
+      for (const section of page.menus[0].sections) for (const item of section.items) {
+        titles.push(item.title);
+        expect(item.description).toBe(state.restaurantProfile.menus.menuData[1].sections[0].items[0].description);
+        expect(item.variationGroups[0].items[0].price).toBe('6.00');
+      }
+      expect(page.menus[0].updated).toBe(state.restaurantProfile.menus.menuData[1].updated);
+      expect(page.pagination.total_items).toBe(32);
+      offset = page.pagination.next_offset;
+    } while (offset !== null);
+    expect(titles).toEqual(Array.from({ length: 32 }, (_, i) => `Dish ${i}`));
+  });
+
+  it('honors small explicit pages and exact section filters', async () => {
+    mockFetchHtml.mockResolvedValue(html);
+    const page = parse(await harness.callTool('opentable_get_menu', { restaurant_id: 42, menu_name: 'Dinner', section_name: ' main courses ', limit: 1 }));
+    expect(page.menus[0].sections[0].items).toHaveLength(1);
+    expect(page.pagination.next_offset).toBe(1);
+    expect(page.pagination.total_items).toBe(2);
+    const missing = parse(await harness.callTool('opentable_get_menu', { restaurant_id: 42, section_name: 'Missing' }));
+    expect(missing.section_found).toBe(false);
+    expect(missing.available_sections).toContain('Main courses');
+  });
+
+  it('does not truncate a single oversized recipe or accept invalid paging', async () => {
+    const state = structuredClone(fixture);
+    state.restaurantProfile.menus.menuData[1].sections[0].items[0].description = 'ingredient '.repeat(2000);
+    mockFetchHtml.mockResolvedValue(`<script>{"__INITIAL_STATE__":${JSON.stringify(state)}}</script>`);
+    expect((await harness.callTool('opentable_get_menu', { restaurant_id: 42, menu_name: 'Dinner' })).isError).toBe(true);
+    expect((await harness.callTool('opentable_get_menu', { restaurant_id: 42, offset: -1 })).isError).toBe(true);
+    const full = parse(await harness.callTool('opentable_get_menu', { restaurant_id: 42, menu_name: 'Dinner', view: 'full' }));
+    expect(full.menus[0].sections[0].items[0].description).toBe('ingredient '.repeat(2000));
+  });
+
 });

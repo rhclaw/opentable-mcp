@@ -4,7 +4,7 @@ import { viewArg, viewResponse } from '../view.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { OpenTableClient } from '../client.js';
 import { parseRestaurant } from '../parse-restaurant.js';
-import { parseMenu } from '../parse-menu.js';
+import { parseMenu, pageMenu } from '../parse-menu.js';
 import { restaurantCandidatePaths, OPENTABLE_BASE_URL } from '../urls.js';
 
 async function fetchRestaurantPage(client: OpenTableClient, restaurantId: string | number): Promise<{ html: string; url: string }> {
@@ -56,21 +56,25 @@ export function registerRestaurantTools(
     'opentable_get_menu',
     {
       description:
-        'Get published menus for an OpenTable restaurant, including sections, dishes, prices, variations, currency, provider and updated timestamps. Accepts the same numeric id/slug/path/URL as opentable_get_restaurant. Optional menu_name selects an exact title case-insensitively (e.g. Dinner). Returns available_menus and status: available, menu_not_found, external_only or not_available. External menu_url links are returned but never fetched. Prices describe OpenTable\'s published menu, not a live quote from the restaurant.',
+        'Large menus return bounded pages of whole items; follow pagination.next_offset with the same filters. Optional section_name selects an exact section; offset/limit paginate items. view=full without paging is uncapped. Get published menus for an OpenTable restaurant, including sections, dishes, prices, variations, currency, provider and updated timestamps. Accepts the same numeric id/slug/path/URL as opentable_get_restaurant. Optional menu_name selects an exact title case-insensitively (e.g. Dinner). Returns available_menus and status: available, menu_not_found, external_only or not_available. External menu_url links are returned but never fetched. Prices describe OpenTable\'s published menu, not a live quote from the restaurant.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         view: viewArg(),
         restaurant_id: z.union([z.string(), PositiveInt]).describe('Numeric restaurant id, slug, path, or exact URL from opentable_search_restaurants.'),
+        section_name: z.string().trim().min(1).optional(),
+        offset: z.number().int().min(0).optional(),
+        limit: z.number().int().min(1).max(50).optional(),
         menu_name: z.string().trim().min(1).optional().describe('Exact published menu title, case-insensitive. Omit to return all menus; available_menus lists titles when a selection is not found.'),
       }),
     },
-    async ({ restaurant_id, menu_name, view }) => {
+    async ({ restaurant_id, menu_name, view, section_name, offset, limit }) => {
       try {
         const { html, url } = await fetchRestaurantPage(client, restaurant_id);
-        const result = parseMenu(html, url, menu_name);
+        const result = pageMenu(parseMenu(html, url, menu_name), { view, section_name, offset, limit });
         client.recordCapability?.('menus', 'passed');
         return viewResponse(view, result);
       } catch (error) { client.recordCapability?.('menus', 'failed', 'read_or_parse_error'); throw error; }
+
     },
   );
 }
