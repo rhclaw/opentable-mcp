@@ -42,6 +42,34 @@ export const AVAILABILITY_GRAPHQL_OP_NAME = 'availability';
 // again. …").
 export { SessionNotAuthenticatedError, UpstreamHttpError };
 
+/**
+ * OpenTable's Akamai Bot Manager answers with a small HTTP 200 interstitial
+ * (`<div id="sec-if-cpt-container">` + a challenge script) once the bridged
+ * browser's anti-bot clearance lapses. The bridge's in-tab fetch() never runs
+ * that script, so without this check every SSR tool reported the misleading
+ * "__INITIAL_STATE__ not found" and agents retried or guessed slugs. Only a
+ * real page load in the bridged browser renews the clearance.
+ */
+export class BotChallengeError extends Error {
+  readonly code = 'bot_challenge';
+  constructor(path: string) {
+    super(
+      `OpenTable is blocked by a bot check (anti-bot challenge page instead of ${path}). ` +
+        'This is not an empty result and not a parsing change: the bridged browser\'s anti-bot clearance has expired. ' +
+        'Do not retry other restaurants, guess URLs or use a booking preview. ' +
+        'Report OpenTable as temporarily unavailable; recovery is to reload an OpenTable restaurant page in the bridged browser, after which one retry is reasonable.'
+    );
+    this.name = 'BotChallengeError';
+  }
+}
+
+const BOT_CHALLENGE_MARKERS = ['sec-if-cpt-container', 'behavioral-content'];
+
+/** Capability-observation code for a failed SSR read. */
+export function readFailureCode(error: unknown): string {
+  return error instanceof BotChallengeError ? error.code : 'read_or_parse_error';
+}
+
 export interface OpenTableClientOptions {
   /** Transport used to relay fetches to the user's browser. Required —
    *  no implicit default since the migration to @fetchproxy/server. */
@@ -84,6 +112,7 @@ export class OpenTableClient {
    */
   async fetchHtml(path: string): Promise<string> {
     const result = await this.transport.fetch({ path, method: 'GET' });
+    this.throwIfBotChallenge(result, path);
     this.throwIfNotOk(result, 'GET', path);
     this.throwIfSignInPage(result);
     return result.body;
@@ -166,6 +195,13 @@ export class OpenTableClient {
       result.status,
       `OpenTable API error: ${result.status} for ${method} ${path}${bodyPreview}`
     );
+  }
+
+  private throwIfBotChallenge(result: FetchResult, path: string): void {
+    // Real OpenTable pages are hundreds of KB; the interstitial is ~3 KB.
+    if (result.body.length < 20_000 && BOT_CHALLENGE_MARKERS.some((m) => result.body.includes(m))) {
+      throw new BotChallengeError(path);
+    }
   }
 
   private throwIfSignInPage(result: FetchResult): void {

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { PositiveInt, minifiedResult } from '@chrischall/mcp-utils';
 import { viewArg, viewResponse } from '../view.js';
 import type { McpServer } from '@modelcontextprotocol/server';
-import type { OpenTableClient } from '../client.js';
+import { readFailureCode, type OpenTableClient } from '../client.js';
 import { parseSearch } from '../parse-search.js';
 
 /**
@@ -76,7 +76,7 @@ export function registerSearchTools(
       const result = parseSearch(html);
       client.recordCapability?.('search', 'passed');
       return viewResponse(view, result);
-      } catch (error) { client.recordCapability?.('search', 'failed', 'read_or_parse_error'); throw error; }
+      } catch (error) { client.recordCapability?.('search', 'failed', readFailureCode(error)); throw error; }
     }
   );
 }

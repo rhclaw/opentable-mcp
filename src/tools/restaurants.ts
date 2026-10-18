@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { PositiveInt, UpstreamHttpError } from '@chrischall/mcp-utils';
 import { viewArg, viewResponse } from '../view.js';
 import type { McpServer } from '@modelcontextprotocol/server';
-import type { OpenTableClient } from '../client.js';
+import { readFailureCode, type OpenTableClient } from '../client.js';
 import { parseRestaurant } from '../parse-restaurant.js';
 import { parseMenu, pageMenu } from '../parse-menu.js';
 import { restaurantCandidatePaths, OPENTABLE_BASE_URL } from '../urls.js';
@@ -73,7 +73,7 @@ export function registerRestaurantTools(
         const result = pageMenu(parseMenu(html, url, menu_name), { view, section_name, offset, limit });
         client.recordCapability?.('menus', 'passed');
         return viewResponse(view, result);
-      } catch (error) { client.recordCapability?.('menus', 'failed', 'read_or_parse_error'); throw error; }
+      } catch (error) { client.recordCapability?.('menus', 'failed', readFailureCode(error)); throw error; }
 
     },
   );
