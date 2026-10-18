@@ -144,8 +144,20 @@ export function parseAvailabilityResponse(
     );
   }
 
+  // A degraded tab (e.g. an anti-bot challenge in place of the restaurant
+  // page) has been seen answering `availability: [null]`. That is not "no
+  // slots", so say so instead of dereferencing null.
+  if (restaurants.length > 0 && restaurants.every((rest) => rest == null)) {
+    throw new Error(
+      'OpenTable returned no restaurant data for this availability query. Availability is unverified, not empty — ' +
+        'the bridged browser session is likely blocked by a bot check or not on a loaded restaurant page. ' +
+        'Reload an OpenTable restaurant page in the bridged browser, then retry once. Do not cycle through other restaurants.'
+    );
+  }
+
   const out: FormattedSlot[] = [];
   for (const rest of restaurants) {
+    if (rest == null) continue;
     const restaurantId = rest.restaurantId;
     if (typeof restaurantId !== 'number') continue;
     for (const day of rest.availabilityDays ?? []) {
